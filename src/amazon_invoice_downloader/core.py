@@ -121,6 +121,16 @@ class DateWindow:
 
 
 @dataclass(frozen=True)
+class OrderCardFields:
+    """Best-effort fields retained even when a complete card cannot be parsed."""
+
+    order_id: str | None
+    order_date: date | None
+    total: str | None
+    cancelled: bool
+
+
+@dataclass(frozen=True)
 class OrderSummary:
     """Fields extracted from the visible text of a single Amazon order card."""
 
@@ -212,28 +222,50 @@ def parse_date_window(all_years: bool, year: str | None, date_range: str | None)
     return DateWindow(date(selected_year, 1, 1), date(selected_year, 12, 31))
 
 
+def parse_order_card_fields(text: str) -> OrderCardFields:
+    """Extract every recognizable field without requiring a complete card.
+
+    Amazon occasionally omits a visible order total. The strict parser must
+    still reject that card because the total is part of the output filename,
+    but retaining its ID and date makes the manifest useful for diagnosis.
+    """
+
+    order_match = ORDER_ID_RE.search(text)
+    normalized = _ascii_text(text)
+    return OrderCardFields(
+        order_id=order_match.group(0) if order_match else None,
+        order_date=_parse_order_date(text),
+        total=_parse_order_total(text),
+        cancelled=bool(re.search(r"\b(cancelled|canceled|annulee?)\b", normalized, re.IGNORECASE)),
+    )
+
+
 def parse_order_card(text: str) -> OrderSummary:
     """Parse an order card by labels and patterns, never by fragile span indexes."""
 
-    order_match = ORDER_ID_RE.search(text)
-    order_date = _parse_order_date(text)
-    order_total = _parse_order_total(text)
-    normalized = _ascii_text(text)
-    cancelled = bool(re.search(r"\b(cancelled|canceled|annulee?)\b", normalized, re.IGNORECASE))
+    fields = parse_order_card_fields(text)
     missing = [
         name
-        for name, match in (("order ID", order_match), ("order date", order_date), ("order total", order_total))
+        for name, match in (
+            ("order ID", fields.order_id),
+            ("order date", fields.order_date),
+            ("order total", fields.total),
+        )
         # Amazon frequently omits the total from cancelled cards. The total is
         # irrelevant because cancelled orders are logged but never downloaded.
-        if match is None and not (name == "order total" and cancelled)
+        if match is None and not (name == "order total" and fields.cancelled)
     ]
     if missing:
         raise ValueError(f"Could not parse {', '.join(missing)} from order card")
+    # The missing-field check above guarantees these required values and also
+    # narrows their Optional types for static analyzers.
+    assert fields.order_id is not None
+    assert fields.order_date is not None
     return OrderSummary(
-        order_id=order_match.group(0),
-        order_date=order_date,
-        total=order_total or "0.00",
-        cancelled=cancelled,
+        order_id=fields.order_id,
+        order_date=fields.order_date,
+        total=fields.total or "0.00",
+        cancelled=fields.cancelled,
     )
 
 

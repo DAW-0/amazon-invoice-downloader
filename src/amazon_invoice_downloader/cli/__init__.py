@@ -70,6 +70,7 @@ from ..core import (
     option_year,
     parse_date_window,
     parse_order_card,
+    parse_order_card_fields,
     pdf_filename,
     preferred_document_links,
 )
@@ -413,10 +414,32 @@ def _process_year(
             return
         for card_index in range(card_count):
             card = cards.nth(card_index)
+            card_text = ""
             try:
-                summary = parse_order_card(card.inner_text())
+                card_text = card.inner_text()
+                summary = parse_order_card(card_text)
             except Exception as exc:
-                manifest.append(status="parse_error", year=year, page=page_number, error=str(exc))
+                # Preserve any independently parseable ID/date/total. This is
+                # enough to reconcile unusual cards without storing customer
+                # addresses or product text in the diagnostic manifest.
+                try:
+                    fields = parse_order_card_fields(card_text)
+                    order_id = fields.order_id or ""
+                    order_date = fields.order_date.isoformat() if fields.order_date else ""
+                    order_total = fields.total or ""
+                except Exception:
+                    order_id = ""
+                    order_date = ""
+                    order_total = ""
+                manifest.append(
+                    status="parse_error",
+                    year=year,
+                    page=page_number,
+                    order_date=order_date,
+                    order_total=order_total,
+                    order_id=order_id,
+                    error=str(exc),
+                )
                 continue
             base = dict(
                 year=year,

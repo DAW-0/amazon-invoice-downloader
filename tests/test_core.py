@@ -16,6 +16,7 @@ from amazon_invoice_downloader.core import (
     option_year,
     parse_date_window,
     parse_order_card,
+    parse_order_card_fields,
     pdf_filename,
     preferred_document_links,
 )
@@ -68,6 +69,15 @@ def test_cancelled_order_does_not_require_a_total():
     order = parse_order_card(card_without_total + "\nCancelled\n")
     assert order.cancelled
     assert order.total == "0.00"
+
+
+def test_partial_order_fields_survive_a_missing_total():
+    card_without_total = re.sub(r"TOTAL\s*\$1,234\.56", "", SAMPLE_CARD)
+    fields = parse_order_card_fields(card_without_total)
+    assert fields.order_id == "123-1234567-1234567"
+    assert fields.order_date == date(2010, 1, 5)
+    assert fields.total is None
+    assert not fields.cancelled
 
 
 def test_french_order_card_and_decimal_format_are_supported():
